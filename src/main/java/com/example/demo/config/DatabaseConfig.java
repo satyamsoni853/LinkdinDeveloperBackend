@@ -21,6 +21,9 @@ public class DatabaseConfig {
 
   @Bean
   public DataSource dataSource() {
+    if (databaseUrl == null || databaseUrl.isBlank()) {
+      throw new IllegalStateException("DATABASE_URL environment variable is not set!");
+    }
     String url = databaseUrl;
 
     // Fix: If the URL starts with postgres://, change it to jdbc:postgresql://
