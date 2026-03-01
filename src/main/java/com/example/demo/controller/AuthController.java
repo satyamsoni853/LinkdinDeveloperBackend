@@ -79,9 +79,68 @@ public class AuthController {
   }
 
   /**
-   * Step 2: Receive user details fetched by the frontend from LinkedIn APIs.
-   * Stores/updates the user in the PostgreSQL database and returns the saved
-   * user.
+   * Step 2: Fetch user profile from LinkedIn using the access token
+   * (server-side).
+   * This avoids CORS issues since the browser can't call LinkedIn APIs directly.
+   * Also saves/updates the user in the database.
+   */
+  @PostMapping("/linkedin/userinfo")
+  public ResponseEntity<?> fetchAndSaveUser(@RequestBody Map<String, String> request) {
+    String accessToken = request.get("access_token");
+    if (accessToken == null || accessToken.isBlank()) {
+      return ResponseEntity.badRequest().body(Map.of("error", "Access token is missing"));
+    }
+
+    try {
+      RestTemplate restTemplate = new RestTemplate();
+
+      // Fetch profile from LinkedIn API (server-side, no CORS issue)
+      HttpHeaders headers = new HttpHeaders();
+      headers.setBearerAuth(accessToken);
+      HttpEntity<String> entity = new HttpEntity<>(headers);
+
+      @SuppressWarnings("unchecked")
+      ResponseEntity<Map<String, Object>> profileResponse = restTemplate.exchange(
+          "https://api.linkedin.com/v2/userinfo",
+          HttpMethod.GET,
+          entity,
+          (Class<Map<String, Object>>) (Class<?>) Map.class);
+
+      Map<String, Object> profile = profileResponse.getBody();
+      if (profile == null) {
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+            .body(Map.of("error", "Failed to fetch profile from LinkedIn"));
+      }
+
+      // Build user from LinkedIn profile
+      User user = new User();
+      user.setFirstName((String) profile.getOrDefault("given_name", ""));
+      user.setLastName((String) profile.getOrDefault("family_name", ""));
+      user.setEmail((String) profile.getOrDefault("email", ""));
+      user.setProfilePicture((String) profile.getOrDefault("picture", ""));
+      user.setLinkedinId((String) profile.getOrDefault("sub", ""));
+
+      // Save or update in database
+      User savedUser = userRepository.findByEmail(user.getEmail())
+          .map(existingUser -> {
+            existingUser.setFirstName(user.getFirstName());
+            existingUser.setLastName(user.getLastName());
+            existingUser.setProfilePicture(user.getProfilePicture());
+            existingUser.setLinkedinId(user.getLinkedinId());
+            return userRepository.save(existingUser);
+          })
+          .orElseGet(() -> userRepository.save(user));
+
+      return ResponseEntity.ok(savedUser);
+
+    } catch (Exception e) {
+      return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+          .body(Map.of("error", "Failed to fetch/save user: " + e.getMessage()));
+    }
+  }
+
+  /**
+   * Legacy: Save user details sent directly from frontend.
    */
   @PostMapping("/linkedin/save-user")
   public ResponseEntity<?> saveUser(@RequestBody User user) {
