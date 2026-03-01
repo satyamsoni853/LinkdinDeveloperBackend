@@ -6,47 +6,72 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 import javax.sql.DataSource;
+import java.net.URI;
 
 @Configuration
 public class DatabaseConfig {
 
-  @Value("${DATABASE_URL}")
+  @Value("${DATABASE_URL:}")
   private String databaseUrl;
-
-  @Value("${DATABASE_USERNAME:}")
-  private String username;
-
-  @Value("${DATABASE_PASSWORD:}")
-  private String password;
 
   @Bean
   public DataSource dataSource() {
     if (databaseUrl == null || databaseUrl.isBlank()) {
       throw new IllegalStateException("DATABASE_URL environment variable is not set!");
     }
-    String url = databaseUrl;
 
-    // Fix: If the URL starts with postgres://, change it to jdbc:postgresql://
-    if (url.startsWith("postgres://")) {
-      url = url.replace("postgres://", "jdbc:postgresql://");
+    try {
+      // Normalize the scheme for URI parsing
+      String uriString = databaseUrl;
+      if (uriString.startsWith("jdbc:")) {
+        uriString = uriString.substring(5); // remove "jdbc:" prefix for parsing
+      }
+      if (uriString.startsWith("postgresql://")) {
+        uriString = "postgres://" + uriString.substring("postgresql://".length());
+      }
+
+      URI dbUri = new URI(uriString);
+
+      // Extract user and password from the URI
+      String user = null;
+      String pass = null;
+      if (dbUri.getUserInfo() != null) {
+        String[] userInfo = dbUri.getUserInfo().split(":", 2);
+        user = userInfo[0];
+        if (userInfo.length > 1) {
+          pass = userInfo[1];
+        }
+      }
+
+      // Build clean JDBC URL (without credentials in the URL)
+      String query = dbUri.getQuery();
+      // Remove channel_binding parameter (not supported by JDBC driver)
+      if (query != null) {
+        query = query.replaceAll("&?channel_binding=[^&]*", "").replaceAll("^&", "");
+        if (query.isEmpty()) {
+          query = null;
+        }
+      }
+
+      String jdbcUrl = "jdbc:postgresql://" + dbUri.getHost()
+          + (dbUri.getPort() > 0 ? ":" + dbUri.getPort() : "")
+          + dbUri.getPath()
+          + (query != null ? "?" + query : "");
+
+      DataSourceBuilder<?> dataSourceBuilder = DataSourceBuilder.create();
+      dataSourceBuilder.url(jdbcUrl);
+
+      if (user != null && !user.isEmpty()) {
+        dataSourceBuilder.username(user);
+      }
+      if (pass != null && !pass.isEmpty()) {
+        dataSourceBuilder.password(pass);
+      }
+
+      return dataSourceBuilder.build();
+
+    } catch (Exception e) {
+      throw new IllegalStateException("Failed to parse DATABASE_URL: " + databaseUrl, e);
     }
-
-    // If it doesn't have jdbc: at all, prepend it
-    if (!url.startsWith("jdbc:")) {
-      url = "jdbc:postgresql://" + url.split("://")[1];
-    }
-
-    DataSourceBuilder<?> dataSourceBuilder = DataSourceBuilder.create();
-    dataSourceBuilder.url(url);
-
-    // Only set username/password if they are explicitly provided and not empty
-    if (username != null && !username.isEmpty()) {
-      dataSourceBuilder.username(username);
-    }
-    if (password != null && !password.isEmpty()) {
-      dataSourceBuilder.password(password);
-    }
-
-    return dataSourceBuilder.build();
   }
 }

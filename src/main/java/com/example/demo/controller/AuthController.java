@@ -14,7 +14,7 @@ import java.util.Map;
 
 @RestController
 @RequestMapping("/api/auth")
-@CrossOrigin(origins = "http://localhost:3000")
+@CrossOrigin(origins = { "http://localhost:3000", "https://linkdin-devloper-link.vercel.app" })
 public class AuthController {
 
   @Value("${linkedin.client.id}")
